@@ -5,10 +5,10 @@ import time
 # Capture parameters
 CAMERA_ID = 0  # Camera ID (usually 0 for built-in webcam)
 CHESSBOARD_SIZE = (8, 5)  # Number of inner corners per chessboard row and column
-OUTPUT_DIRECTORY = '/home/humiii/april_ws/src/apriltag_tracker/calibration'  # Directory to save calibration images
+OUTPUT_DIRECTORY = '/home/conn/april_ws/src/apriltag_tracker/calibration'  # Directory to save calibration images
 
 
-IMAGE_RES = (1280, 720)
+IMAGE_RES = (640, 480)
 
 def capture_calibration_images():
     """
@@ -44,12 +44,19 @@ def capture_calibration_images():
     print(f"Images will be saved to {OUTPUT_DIRECTORY}")
     
     while True:
+        user_input = input('press c to capture, q to quit:').strip().lower()
+        if user_input == 'q':
+            print("Exiting...")
+            break
+        if user_input != 'c':
+            print('invalid')
+            continue 
         # Capture frame
         ret, frame = cap.read()
         
         if not ret:
             print("Error: Failed to capture image")
-            break
+            continue
         
         # Convert to grayscale for chessboard detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -63,34 +70,41 @@ def capture_calibration_images():
             cv2.drawChessboardCorners(frame, CHESSBOARD_SIZE, corners, ret_chess)
             cv2.putText(frame, "Chessboard detected!", (50, 50), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            img_name = os.path.join(OUTPUT_DIRECTORY, f"calibration_{img_counter:02d}.jpg")
+            cv2.imwrite(img_name, frame)
+            print(f"Captured {img_name}")
+
+            img_counter += 1
+
         
         # Display capture counter
         cv2.putText(frame, f"Captured: {img_counter}", (50, height - 50), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
         # Display the frame
-        cv2.imshow('Camera Calibration', frame)
-        
+        #cv2.imshow('Camera Calibration', frame)
         # Wait for key press
-        key = cv2.waitKey(1) & 0xFF
-        
+        #key = cv2.waitKey(1) & 0xFF
+        #use_input = input('press c to capture, q to quit:')
         # 'q' or Escape to quit
-        if key == ord('q') or key == 27:  # 27 is the ASCII code for Escape
-            print("Exiting...")
-            break
+        #if key == ord('q') or key == 27:  # 27 is the ASCII code for Escape
+        #if user_input == 'q':
+         #   print("Exiting...")
+          #  break
         
         # 'c' to capture
-        elif key == ord('c'):
+        #elif key == ord('c'):
+        #elif user_input == 'c':
             # Save the image
-            img_name = os.path.join(OUTPUT_DIRECTORY, f"calibration_{img_counter:02d}.jpg")
-            cv2.imwrite(img_name, frame)
-            print(f"Captured {img_name}")
+            #img_name = os.path.join(OUTPUT_DIRECTORY, f"calibration_{img_counter:02d}.jpg")
+            #cv2.imwrite(img_name, frame)
+           # print(f"Captured {img_name}")
             
-            img_counter += 1
+          #  img_counter += 1
     
     # Release camera and close windows
     cap.release()
-    cv2.destroyAllWindows()
+    #cv2.destroyAllWindows()
     
     print(f"Captured {img_counter} images for calibration")
 

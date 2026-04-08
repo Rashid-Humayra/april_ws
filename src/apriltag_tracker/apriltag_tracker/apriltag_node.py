@@ -24,7 +24,7 @@ class AprilTagTracker(Node):
         pkg_path = get_package_share_directory('apriltag_tracker')
         calibration_path = os.path.join(pkg_path, 'calibration')
 
-        #calibration_path = 'C:/Users/hrzan/Documents/NTNU 1st Semester/Specialization Project/camera-calibration/output'
+       # calibration_path ="/home/conn/april_ws/src/apriltag_tracker/calibration"
 
         self.dist_coeffs = np.loadtxt(os.path.join(calibration_path, 'distortion_coefficients.txt'), dtype=np.float32)
         self.dist_coeffs = self.dist_coeffs.reshape(-1)
@@ -47,16 +47,19 @@ class AprilTagTracker(Node):
 
 
 
-        #cap = cv2.VideoCapture(0) # camera initialization
+       # cap = cv2.VideoCapture(0) # camera initialization
 
-        target_width = 1920
-        target_height = 1080
+        target_width = 640
+        target_height = 480
+        #new_width = 640
+        #new_height = 480
         #cap.set(cv2.CAP_PROP_FRAME_WIDTH, target_width)
         #cap.set(cv2.CAP_PROP_FRAME_HEIGHT, target_height)
 
 
         self.camera_matrix = np.loadtxt(os.path.join(calibration_path, 'camera_matrix.txt'), dtype=np.float32)
-
+        #scale_x = new_width/target_width
+        #scale_y = new_height/target_height
         fx = self.camera_matrix[0, 0]
         fy = self.camera_matrix[1, 1]
         cx = self.camera_matrix[0, 2]
@@ -72,7 +75,7 @@ class AprilTagTracker(Node):
         
         self.image_sub = self.create_subscription(
             Image,
-            '/model/bluerov2/camera/image', #'/image_raw',
+            '/image_raw', # '/model/bluerov2/camera/image', #'/image_raw',
             self.image_callback,
             10
         )
@@ -113,6 +116,7 @@ class AprilTagTracker(Node):
     def image_callback(self, msg):
         
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        print(frame.shape)
         annotated = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)   
     
@@ -142,9 +146,9 @@ class AprilTagTracker(Node):
                     cv2.line(annotated, pt1, pt2, (0, 255, 0), 2)
                     
                 cv2.drawFrameAxes(annotated, self.camera_matrix, self.dist_coeffs, rvec, tvec, 0.1)
-                cv2.putText(annotated, f"ID: {tag_id} Z: {z:.2f} m", 
+                cv2.putText(annotated, f"ID: {tag_id}",  # X: {x:.2f} m Z: {z:.2f} m", 
                         (int(det.center[0]), int(det.center[1]-30)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)   
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)   
             
         annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
         annotated_msg.header = msg.header

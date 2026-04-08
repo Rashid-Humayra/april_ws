@@ -27,19 +27,21 @@ class DockingController(Node):
         
         self.declare_parameter("control_hz", 30)
         
-        self.declare_parameter("k_alpha", 1.2)
+        self.declare_parameter("k_alpha", 0.08)
         self.declare_parameter("r_max", 0.35)
-        self.declare_parameter("turn_sign", -1.0)
-        self.declare_parameter("alpha_align", 0.15) # rad: if less than this- DRIVE
+        self.declare_parameter("turn_sign",-1.0)
+        self.declare_parameter("alpha_align", 0.25) # rad: if less than this- DRIVE
         self.declare_parameter("alpha_hard", 0.45)  # rad: if more than this- stop forward
-        self.declare_parameter("pose_timeout", 0.6)
-        self.declare_parameter("u_far", 0.12)  # velocity when far
-        self.declare_parameter("u_near", 0.08) # velocity when close
+        self.declare_parameter("pose_timeout", 1.0)
+        self.declare_parameter("u_far", 0.4)  # velocity when far
+        self.declare_parameter("u_near", 0.1) # velocity when close
         self.declare_parameter("z_slow", 2.0)  # threshold for slowing
-        self.declare_parameter("z_stop", 0.80) # stop distance
+        self.declare_parameter("z_stop", 0.30) # stop distance
         self.declare_parameter("u_max", 0.20)  # safety constraint
-        self.declare_parameter("search_spin_rate", 0.20)  # rad/s
+        self.declare_parameter("search_spin_rate", 0.12)  # rad/s
         self.declare_parameter("search_forward", 0.00)
+        self.declare_parameter("search_to_align_delay", 0.5)
+        self.declare_parameter("lost_to_search_delay", 0.8)
         
         self.control_hz = float(self.get_parameter("control_hz").value)
         self.k_alpha = float(self.get_parameter("k_alpha").value)
@@ -58,7 +60,8 @@ class DockingController(Node):
 
         self.search_spin_rate = float(self.get_parameter("search_spin_rate").value)
         self.search_forward = float(self.get_parameter("search_forward").value)
-    
+        self.search_to_align_delay = float(self.get_parameter("search_to_align_delay").value)
+        self.lost_to_search_delay = float(self.get_parameter("lost_to_search_delay").value)
     
         self.sub_valid = self.create_subscription(Bool, "/dock/tag0_valid", self.on_valid, 10)
         self.sub_pose = self.create_subscription(Vector3Stamped, "/dock/tag0", self.on_pose, 10)
@@ -66,7 +69,8 @@ class DockingController(Node):
         self.pub_cmd = self.create_publisher(Twist, "/cmd_vel", 10)
         self.pub_state = self.create_publisher(String, "/dock/state", 10)
         
-        
+        self.tag_seen_since = -1.0
+        self.tag_lost_since = -1.0
         
         
         self.state = State.SEARCH
@@ -113,64 +117,102 @@ class DockingController(Node):
     def step(self):
         now = self.get_clock().now().nanoseconds / 1e9
         ok = self._pose_ok(now)
-        
+
         cmd = Twist()
-            
-            
-        ####search when tag not detected
-        if not ok:
-            self._set_state(State.SEARCH)
+
+        # ----------------------------
+        # Update seen/lost timers
+        # ----------------------------
+        if ok:
+            self.tag_lost_since = -1.0
+            if self.tag_seen_since < 0.0:
+                self.tag_seen_since = now
+        else:
+            self.tag_seen_since = -1.0
+            if self.tag_lost_since < 0.0:
+                self.tag_lost_since = now
+
+        # ----------------------------
+        # SEARCH
+        # ----------------------------
+        if self.state == State.SEARCH:
             cmd.linear.x = float(self.search_forward)
             cmd.angular.z = float(self.search_spin_rate)
+
+            # only leave SEARCH if tag has been seen continuously for some time
+            if ok and self.tag_seen_since > 0.0:
+                if (now - self.tag_seen_since) >= self.search_to_align_delay:
+                    self._set_state(State.ALIGN)
+
             self.pub_cmd.publish(cmd)
             return
-        
-        
-        ####pose available
+
+        # ----------------------------
+        # If tag lost too long -> SEARCH
+        # ----------------------------
+        if not ok:
+            if self.tag_lost_since > 0.0 and (now - self.tag_lost_since) >= self.lost_to_search_delay:
+                self._set_state(State.SEARCH)
+
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
+            self.pub_cmd.publish(cmd)
+            return
+
+        # ----------------------------
+        # HOLD if close enough
+        # ----------------------------
         if self.z <= self.z_stop:
             self._set_state(State.HOLD)
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
             self.pub_cmd.publish(cmd)
             return
-        
-        ####set from search state to align state when tag pose is ok
-        if self.state == State.SEARCH:
-            self._set_state(State.ALIGN)
-            
-        
-        r = self.turn_sign * (-self.k_alpha * self.alpha)   #####like a P controller
+
+        # ----------------------------
+        # Yaw-rate command
+        # ----------------------------
+        r = self.turn_sign * (-self.k_alpha * self.alpha)
         r = clamp(r, -self.r_max, self.r_max)
-        
+
+        # ----------------------------
+        # ALIGN
+        # ----------------------------
         if self.state == State.ALIGN:
             cmd.linear.x = 0.0
-            cmd.angular.z = float(r)
-            
+            cmd.angular.z = -float(r)
+
+            # only drive when sufficiently aligned
             if abs(self.alpha) < self.alpha_align:
                 self._set_state(State.DRIVE)
-                
+
             self.pub_cmd.publish(cmd)
             return
-        
-        
+
+        # ----------------------------
+        # DRIVE
+        # ----------------------------
         if self.state == State.DRIVE:
+            # if alignment worsens a lot, stop forward and go back to ALIGN
             if abs(self.alpha) > self.alpha_hard:
-                u = 0.0
+                self._set_state(State.ALIGN)
+                cmd.linear.x = 0.0
+                cmd.angular.z = -float(r)
             else:
                 u = self._speed_schedule(self.z)
-                
-            u = clamp(u, 0.0, self.u_max)
-            
-            cmd.linear.x = float(u)
-            cmd.angular.z = float(r)
-            
+                u = clamp(u, 0.0, self.u_max)
+                cmd.linear.x = -float(u)
+                cmd.angular.z = -float(r)
+
             self.pub_cmd.publish(cmd)
             return
-        
+
+        # ----------------------------
+        # HOLD fallback
+        # ----------------------------
         cmd.linear.x = 0.0
         cmd.angular.z = 0.0
         self.pub_cmd.publish(cmd)
-  
 
           
 def main(args=None):
